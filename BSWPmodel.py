@@ -11,25 +11,21 @@ from dolfin import *
 from math import *
 import numpy as np
 
-import os
 
 ##############################################
-### Import parameter values from parameters.py:
-from parameters import *
+### Import parameter values from parameter_values.py:
+from parameter_values import *
 parameters["form_compiler"]["quadrature_degree"] = 5
 
 
 ##############################################
-### Create folder for storing system solutions and data:
-folder = 'output/'
-os.makedirs(folder[:-1],exist_ok=True)
-
-
-
-##############################################
 ### Import the mesh and extract boundary mesh:
-mesh = 'mesh/'+str_mesh + '.xml' # The mesh on Omega is given in input from keyboard (see parameters.py)
+mesh = 'mesh/'+str_mesh + '.xml' # The mesh on Omega is given in input from keyboard (see parameter_values.py)
 domain_mesh = Mesh(mesh)
+
+if selected_mesh == '3' and refinement == '2':
+    domain_mesh = refine(domain_mesh)
+
 dX = dx(domain_mesh)
 boundary_mesh = BoundaryMesh(domain_mesh, 'exterior') # The boundary mesh is extracted from bulk mesh
 dx = dx(boundary_mesh)
@@ -88,13 +84,37 @@ print('---')
 ##############################################
 ### Setting the initial conditions:
 # Initial condition for a
-a_0 = Expression(ic_a, degree = 3, C_up = C_up, invsigma2_x=invsigma2_x, invsigma2_y=invsigma2_y, invsigma2_z=invsigma2_z, x0=x0, y0=y0, z0=z0)
+print('Setting up the initial conditions...\n')
+
+if selected_mesh == '1' or selected_mesh =='4':
+    a_0 = Expression(ic_a, degree = 3, a_p0=a_p0, invsigma2_x0=invsigma2_x0, x0=x0, invsigma2_y0=invsigma2_y0, y0=y0, invsigma2_z0=invsigma2_z0, z0=z0)    
+
+elif selected_mesh == '2':
+    a_T = Expression(ic_a_top, degree = 3, a_p0=a_p0, invsigma2_x0=invsigma2_x0, x0=x0, invsigma2_y0=invsigma2_y0, y0=y0)
+    a_B = Expression(ic_a_bottom, degree = 3, a_p1=a_p1, invsigma2_x1=invsigma2_x1, x1=x1, invsigma2_y1=invsigma2_y1, y1=y1)
+    a_T_n = interpolate(a_T, V_Boundary)
+    a_B_n = interpolate(a_B, V_Boundary)
+    print('mass of a top = ', assemble(a_T_n*dx))
+    print('mass of a bottom = ', assemble(a_B_n*dx))
+    a_0 = Expression(ic_a, degree = 3, a_p0=a_p0, invsigma2_x0=invsigma2_x0, x0=x0, invsigma2_y0=invsigma2_y0, y0=y0, a_p1=a_p1, invsigma2_x1=invsigma2_x1, x1=x1, invsigma2_y1=invsigma2_y1, y1=y1)
+
+elif selected_mesh == '3':
+    a_T = Expression(ic_a_top, degree = 3, a_p0=a_p0, invsigma2_x0=invsigma2_x0, x0=x0, invsigma2_y0=invsigma2_y0, y0=y0, invsigma2_z0=invsigma2_z0, z0=z0)
+    a_B = Expression(ic_a_bottom, degree = 3, a_p1=a_p1, invsigma2_x1=invsigma2_x1, x1=x1, invsigma2_y1=invsigma2_y1, y1=y1, invsigma2_z1=invsigma2_z1, z1=z1)
+    a_T_n = interpolate(a_T, V_Boundary)
+    a_B_n = interpolate(a_B, V_Boundary)
+    print('mass of a top = ', assemble(a_T_n*dx))
+    print('mass of a bottom = ', assemble(a_B_n*dx))
+    a_0 = Expression(ic_a, degree = 3, a_p0=a_p0, invsigma2_x0=invsigma2_x0, x0=x0, invsigma2_y0=invsigma2_y0, y0=y0, invsigma2_z0=invsigma2_z0, z0=z0, a_p1=a_p1, invsigma2_x1=invsigma2_x1, x1=x1, invsigma2_y1=invsigma2_y1, y1=y1, invsigma2_z1=invsigma2_z1, z1=z1)
+
+
 a_n = interpolate(a_0, V_Boundary)
 
 # Initial condition for b
 b_homogeneous_n = m0 - assemble(a_n*dx)/bulk_volume
 if model == 'BS':
     b_n = interpolate(Constant(b_homogeneous_n), V_Bulk)
+
     b_boundary = interpolate(b_n, V_Boundary)     # Restriction of b_n to the boundary
     
     # For compatibility issues, we extend a over the bulk by creating the following
@@ -165,11 +185,17 @@ A = a.vector()
 t = t0
 time=[] # List where time steps will be stored
 l2norm_Delta_a = [] # List where the L2-norm of a - a_n will be stored at each time
+mass_a = []
+
 
 i=0
-index_saving = 0
+index_saving = 0 #13 ## 0
 lensavingtimes = len(savingtimes)
 
+m_a = assemble(a_n*dx)
+mass_a.append(m_a)
+if model == 'BS':
+    mass_tot = [m_a+ assemble(b_n*dX)] # List where the integral of b will be stored at each time
 
 
 #####################################
@@ -183,9 +209,15 @@ while t<Tf:
     #####################################
     ### STORING THE SOLUTION
     if index_saving < lensavingtimes and t >= savingtimes[index_saving]:
-        Solution_a << (a_n, t)
+        Solution_a << (a_n, t-tau)
+        np.savetxt(folder + '/' + filename + '-last_solution_a_t='+ str(t-tau) + '.txt', a_n.vector())
+        np.savetxt(folder + '/' + filename + '-mass_a-t=' + str(t-tau) + '.txt', mass_a)
+        mass_a = []
         if model == 'BS':
-            Solution_b << (b_n, t)
+            Solution_b << (b_n, t-tau)
+            np.savetxt(folder + '/' + filename + '-last_solution_b_t='+ str(t-tau) + '.txt', b_n.vector())
+            np.savetxt(folder + '/' + filename + '-mass_tot-t=' + str(t-tau) + '.txt', mass_tot)
+            mass_tot = []
         index_saving += 1
         print('Solution saved at time t = ', int(t),'. Time required ', timer_solution.stop(), ' s') 
         timer_solution = Timer('eval') 
@@ -205,7 +237,7 @@ while t<Tf:
         RHS_Gamma_P =  tau*b_homogeneous_n*F1_n + (1-tau*beta)*M_Gamma_a_n
 
     # Solving the first system using solver_method with preconditioner
-    solve(A_Gamma_P, A_p, RHS_Gamma_P, solver_method, preconditioner) # it returns a_p, predictor for a
+    solve(A_Gamma_P, A_p, RHS_Gamma_P) ## , solver_method, preconditioner) # it returns a_p, predictor for a
 
 
 
@@ -231,7 +263,7 @@ while t<Tf:
         RHS_Omega = RHS_Omega_fixed*b_n.vector() - 0.5*tau*G_n + 0.5*tau*beta*(H_a_p+H_a_n)
 
         # Solving the second system using solver_method with preconditioner
-        solve(A_Omega, B, RHS_Omega, solver_method, preconditioner) # it returns b
+        solve(A_Omega, B, RHS_Omega) ## , solver_method, preconditioner) # it returns b
         
     	# For compatibility issues, the function b is restricted to V_Boundary
         b_boundary_new = interpolate(b,V_Boundary)
@@ -239,7 +271,7 @@ while t<Tf:
     else:
 
         # Calculate the value of b using conservation of total mass
-        b_homogeneous_p = m0 - alpha*assemble(a_p*dx)/bulk_volume
+        b_homogeneous_p = m0 - assemble(a_p*dx)/bulk_volume
 
 
 
@@ -256,16 +288,17 @@ while t<Tf:
         RHS_Gamma_C = (1-0.5*tau*beta)*M_Gamma_a_n - 0.5*tau*beta*Ms_p - 0.5*tau*Da*K_Gamma*a_n.vector() + 0.5*tau*(b_homogeneous_n*F1_n + b_homogeneous_p*F1_p)
     
     # Solving the third system using solver_method with preconditioner
-    solve(A_Gamma_C, A, RHS_Gamma_C, solver_method, preconditioner) # it returns a, corrector for a
+    solve(A_Gamma_C, A, RHS_Gamma_C) ## solver_method, preconditioner) # it returns a, corrector for a
 
 
 
 
     #####################################
-    ### L2-norm of a-a_n is calculated and added to its list. Also time is saved:
+    ### L2-norm of a-a_n is calculated and added to its list. Also time is saved, and the integral of a
     time.append(t)
     l2norm_Delta_a.append(sqrt(assemble((a-a_n)**2*dx))/tau)
-
+    m_a = assemble(a*dx)
+    mass_a.append(m_a)
 
 
     #####################################
@@ -279,6 +312,8 @@ while t<Tf:
         array = a_bulk_n.vector().get_local()
         array[vBulk_dof[vboundary_v[dofb_vboundary]]] = a_n.vector().get_local()
         a_bulk_n.vector()[:] = array
+
+        mass_tot.append(m_a + assemble(b*dX))
         
     else:
         b_homogeneous_n = m0 - assemble(a_n*dx)/bulk_volume
@@ -289,8 +324,14 @@ while t<Tf:
 # Saving the l2norm of a -a_n, as well as the last calculated solutions, in text filea:
 np.savetxt(folder + '/' + filename + '-l2norm_Delta_a.txt', l2norm_Delta_a)
 np.savetxt(folder + '/' + filename + '-last_solution_a_t='+ str(t) + '.txt', a_n.vector())
+np.savetxt(folder + '/' + filename + '-mass_a-t=' + str(t) + '.txt', mass_a)
+
 if model == 'BS':
     np.savetxt(folder + '/' + filename + '-last_solution_b_t='+ str(t) + '.txt', b_n.vector())
+    np.savetxt(folder + '/' + filename + '-mass_tot-t=' + str(t) + '.txt', mass_tot)
+
+
+
 
 print('....')
 print('Process finished.')

@@ -2,6 +2,6 @@ This repository consitutes the supplementary material to the manuscript "Numeric
 
 In the folder mesh/ there are the three meshes (xml format) used in the manuscript. 
 
-The code is given in BSWPmodel.py and parameters.py. 
+The code is given in BSWPmodel.py and parameter_values.py. 
 
 For information and details read BSWPcode-info.pdf
